@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\PenempatanController;
 use App\Http\Controllers\Api\PenggajianController;
 use App\Http\Controllers\Api\PenggajianKomponenController;
 use App\Http\Controllers\Api\PenggajianDetailController;
+use App\Http\Controllers\Api\JurnalUmumController;
 
 Route::get('/ping', fn () => response()->json(['status' => 'API OK']));
 Route::post('/login', [AuthController::class, 'login']);
@@ -25,6 +26,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // ===== HCGA =====
     Route::middleware('cek_peran:HCGA')->group(function () {
+        Route::get('/pegawai/next-kode', [PegawaiController::class, 'nextKode']);
         Route::apiResource('pegawai', PegawaiController::class);
 
         Route::get('/pegawai/{pegawaiId}/penempatan/current', [PenempatanController::class, 'current']);
@@ -43,6 +45,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/penggajian/generate', [PenggajianController::class, 'generate']);
         Route::get('/penggajian-full', [PenggajianController::class, 'indexFull']);
         Route::get('/penggajian-full/{id}', [PenggajianController::class, 'showFull']);
+        Route::get('/penggajian-stats', [PenggajianController::class, 'stats']);
 
         // workflow
         Route::post('/penggajian/{id}/ajukan', [PenggajianController::class, 'ajukanKeDirektur']);
@@ -59,9 +62,17 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // pajak
         Route::post('/penggajian-detail/{detailId}/pph21/hitung', [PenggajianController::class, 'hitungPph21Detail']);
+        
+        // bukti transfer
+        Route::post('/penggajian-detail/{detailId}/upload-bukti', [PenggajianController::class, 'uploadBukti']);
+
         Route::post('/penggajian-periode/{periodeId}/pph21/hitung', [PenggajianController::class, 'hitungPph21Periode']);
         Route::post('/penggajian-periode/{periodeId}/pph21-ter/hitung', [PenggajianController::class, 'hitungPph21TerPeriode']);
         Route::post('/penggajian-periode/{periodeId}/pph21-rekonsiliasi', [PenggajianController::class, 'rekonsiliasiPph21Tahunan']);
+
+        // Jurnal Umum
+        Route::get('/jurnal-umum', [JurnalUmumController::class, 'index']);
+        Route::get('/jurnal-umum/{id}', [JurnalUmumController::class, 'show']);
     });
 
     // ===== DIREKTUR =====
@@ -72,5 +83,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/penggajian/{id}/approve', [PenggajianController::class, 'approveDirektur']);
         Route::post('/penggajian/{id}/reject', [PenggajianController::class, 'rejectDirektur']);
     });
+
+    // ===== PROFILE (All Roles) =====
+    Route::get('/profile', [\App\Http\Controllers\Api\ProfileController::class, 'show']);
+    Route::post('/profile/password', [\App\Http\Controllers\Api\ProfileController::class, 'updatePassword']);
+    Route::patch('/profile/pegawai', [\App\Http\Controllers\Api\ProfileController::class, 'updatePegawai']);
 
 });

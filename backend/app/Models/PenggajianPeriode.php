@@ -20,4 +20,9 @@ class PenggajianPeriode extends Model
     {
         return $this->hasMany(PenggajianDetail::class, 'penggajian_periode_id');
     }
+
+    public function pengaju()
+    {
+        return $this->belongsTo(\App\Models\User::class, 'diajukan_oleh');
+    }
 }

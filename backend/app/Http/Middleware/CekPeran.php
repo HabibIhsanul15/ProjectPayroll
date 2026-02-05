@@ -15,6 +15,8 @@ class CekPeran
             abort(401, 'Belum login');
         }
 
+
+
         if (!in_array($user->peran, $peran)) {
             abort(403, 'Akses ditolak');
         }

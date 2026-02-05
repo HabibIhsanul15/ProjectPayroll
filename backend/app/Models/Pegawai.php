@@ -17,18 +17,27 @@ class Pegawai extends Model
         'jenis_penggajian',
         'nama_bank',
         'nomor_rekening',
+        'atas_nama_rekening',
         'npwp',
         'status_ptkp',
-        'aktif'
+        'aktif',
+        'alamat',
+        'no_telepon',
+        'email_pribadi'
     ];
+
+    protected $casts = [
+        'aktif' => 'boolean',
+        'tanggal_masuk' => 'date'
+    ];
+
     public function penempatan()
-{
-    return $this->hasMany(RiwayatPenempatan::class, 'pegawai_id');
-}
+    {
+        return $this->hasMany(RiwayatPenempatan::class, 'pegawai_id');
+    }
 
-public function user()
-{
-    return $this->belongsTo(User::class, 'pengguna_id');
-}
-
+    public function user()
+    {
+        return $this->belongsTo(User::class, 'pengguna_id');
+    }
 }

@@ -33,15 +33,21 @@ public function komponen()
     return $this->hasMany(PenggajianKomponen::class, 'penggajian_detail_id');
 }
 
-protected static function booted()
-{
-    static::updating(function ($detail) {
-        $detail->loadMissing('periode:id,status');
-        if ($detail->periode && $detail->periode->status !== 'DRAFT') {
-            throw new \Exception('Detail terkunci: periode bukan DRAFT');
-        }
-    });
-}
+    protected static function booted()
+    {
+        static::updating(function ($detail) {
+            $detail->loadMissing('periode:id,status');
+            
+            if ($detail->periode && $detail->periode->status !== 'DRAFT') {
+                // Pengecualian: Upload Bukti Transfer boleh dilakukan saat status DISETUJUI
+                if ($detail->periode->status === 'DISETUJUI' && $detail->isDirty('bukti_transfer')) {
+                    return;
+                }
+
+                throw new \Exception('Detail terkunci: periode bukan DRAFT');
+            }
+        });
+    }
 
 
 }

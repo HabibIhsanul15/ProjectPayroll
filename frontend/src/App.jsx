@@ -7,15 +7,16 @@ import Login from "./pages/auth/Login";
 import HcgaPegawai from "./pages/hcga/Pegawai";
 import PageContainer from "./components/PageContainer";
 import PenempatanPage from "./pages/hcga/Penempatan";
-
-
-function Dashboard() {
-  return (
-    <PageContainer title="Dashboard">
-      <p>Ini konten utama.</p>
-    </PageContainer>
-  );
-}
+import PenggajianList from "./pages/fat/PenggajianList";
+import PenggajianDetail from "./pages/fat/PenggajianDetail";
+import LaporanPenggajian from "./pages/fat/LaporanPenggajian";
+import JurnalUmum from "./pages/fat/JurnalUmum";
+import DirekturDashboard from "./pages/direktur/DirekturDashboard";
+import DirekturReview from "./pages/direktur/DirekturReview";
+import PegawaiDashboard from "./pages/pegawai/PegawaiDashboard";
+import SlipGaji from "./pages/pegawai/SlipGaji";
+import Profile from "./pages/profile/Profile";
+import Dashboard from "./pages/dashboard/Dashboard";
 
 function PenempatanDummy() {
   return (
@@ -63,41 +64,28 @@ export default function App() {
               <Route path="/hcga/penempatan" element={<PenempatanPage />} />
             </Route>
 
-            {/* FAT (dummy dulu) */}
+            {/* FAT */}
             <Route element={<ProtectedRoute allow={["FAT"]} />}>
-              <Route
-                path="/fat/dashboard"
-                element={
-                  <PageContainer title="FAT Dashboard">
-                    <p>Coming soon</p>
-                  </PageContainer>
-                }
-              />
+              <Route path="/fat/dashboard" element={<PenggajianList />} />
+              <Route path="/fat/penggajian/:id" element={<PenggajianDetail />} />
+              <Route path="/fat/jurnal" element={<JurnalUmum />} />
+              <Route path="/fat/laporan" element={<LaporanPenggajian />} />
             </Route>
 
-            {/* DIREKTUR (dummy dulu) */}
+            {/* DIREKTUR */}
             <Route element={<ProtectedRoute allow={["DIREKTUR"]} />}>
-              <Route
-                path="/direktur/dashboard"
-                element={
-                  <PageContainer title="Direktur Dashboard">
-                    <p>Coming soon</p>
-                  </PageContainer>
-                }
-              />
+              <Route path="/direktur/dashboard" element={<DirekturDashboard />} />
+              <Route path="/direktur/approval/:id" element={<DirekturReview />} />
             </Route>
 
-            {/* PEGAWAI (dummy dulu) */}
+            {/* PEGAWAI */}
             <Route element={<ProtectedRoute allow={["PEGAWAI"]} />}>
-              <Route
-                path="/pegawai/dashboard"
-                element={
-                  <PageContainer title="Pegawai Dashboard">
-                    <p>Coming soon</p>
-                  </PageContainer>
-                }
-              />
+              <Route path="/pegawai/dashboard" element={<PegawaiDashboard />} />
+              <Route path="/pegawai/slip/:id" element={<SlipGaji />} />
             </Route>
+
+            {/* PROFILE - All Roles */}
+            <Route path="/profile" element={<Profile />} />
 
             {/* fallback */}
             <Route path="*" element={<Navigate to="/" replace />} />

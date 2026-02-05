@@ -21,3 +21,11 @@ export function getPeran() {
 export function isLoggedIn() {
   return !!getToken();
 }
+
+export function getUser() {
+  try {
+    return JSON.parse(localStorage.getItem("user"));
+  } catch (e) {
+    return null;
+  }
+}

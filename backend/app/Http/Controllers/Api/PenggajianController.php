@@ -10,7 +10,11 @@ use App\Models\RiwayatPenempatan;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use App\Services\Pph21Service;
+use App\Models\JurnalUmum;
+use App\Models\JurnalUmumDetail;
+use App\Models\Coa;
 
 class PenggajianController extends Controller
 {
@@ -121,23 +125,79 @@ class PenggajianController extends Controller
     }
 
     // =========================
-    // FAT: FULL (dengan nominal)
+    // FAT: FULL (dengan nominal + total per periode + stats)
     // =========================
     public function indexFull()
     {
-        $data = PenggajianPeriode::query()
-            ->withCount('detail')
+        $currentYear = date('Y');
+        
+        $periodes = PenggajianPeriode::withCount('detail')
             ->orderByDesc('periode')
             ->get();
 
-        return response()->json(['message' => 'OK', 'data' => $data]);
+        // Add total_biaya for each periode
+        $data = $periodes->map(function ($p) {
+            $p->total_biaya = PenggajianDetail::where('penggajian_periode_id', $p->id)->sum('total');
+            return $p;
+        });
+
+        // Calculate stats inline using DB to avoid any query issues
+        $totalDibayarYTD = DB::table('penggajian_detail')
+            ->join('penggajian_periode', 'penggajian_detail.penggajian_periode_id', '=', 'penggajian_periode.id')
+            ->where('penggajian_periode.status', 'DIBAYARKAN')
+            ->where('penggajian_periode.periode', 'like', $currentYear.'-%')
+            ->sum('penggajian_detail.total');
+            
+        $periodeAktif = $periodes->where('status', '!=', 'DIBAYARKAN')->count();
+
+        return response()->json([
+            'message' => 'OK', 
+            'data' => $data,
+            'stats' => [
+                'total_dibayar_ytd' => (float) $totalDibayarYTD,
+                'periode_aktif' => $periodeAktif,
+            ]
+        ]);
+    }
+
+    // FAT: STATS (aggregated totals)
+    public function stats()
+    {
+        $currentYear = date('Y');
+        
+        // Total dibayarkan YTD (status = DIBAYARKAN)
+        $totalDibayarYTD = DB::table('penggajian_detail')
+            ->join('penggajian_periode', 'penggajian_detail.penggajian_periode_id', '=', 'penggajian_periode.id')
+            ->where('penggajian_periode.status', 'DIBAYARKAN')
+            ->where('penggajian_periode.periode', 'like', $currentYear.'-%')
+            ->sum('penggajian_detail.total');
+            
+        // Total periode aktif (not DIBAYARKAN)
+        $periodeAktif = PenggajianPeriode::where('status', '!=', 'DIBAYARKAN')->count();
+        
+        // Total pegawai aktif
+        $pegawaiAktif = \App\Models\Pegawai::where('aktif', 1)->count();
+        
+        // Pending approval
+        $pendingApproval = PenggajianPeriode::where('status', 'MENUNGGU_APPROVAL_DIREKTUR')->count();
+
+        return response()->json([
+            'message' => 'OK',
+            'data' => [
+                'total_dibayar_ytd' => (float) $totalDibayarYTD,
+                'periode_aktif' => $periodeAktif,
+                'pegawai_aktif' => $pegawaiAktif,
+                'pending_approval' => $pendingApproval,
+            ]
+        ]);
     }
 
     public function showFull($id)
     {
         $periode = PenggajianPeriode::with([
-            'detail.pegawai:id,kode_pegawai,nama_lengkap',
+            'detail.pegawai:id,kode_pegawai,nama_lengkap,nama_bank,nomor_rekening,atas_nama_rekening',
             'detail.jabatan:id,nama_jabatan',
+            'detail.komponen'
         ])->withCount('detail')->findOrFail($id);
 
         $totalBiaya = PenggajianDetail::where('penggajian_periode_id', $id)->sum('total');
@@ -198,7 +258,10 @@ class PenggajianController extends Controller
 
     public function showApproval($id)
     {
-        $periode = PenggajianPeriode::withCount('detail')->findOrFail($id);
+        $periode = PenggajianPeriode::with([
+            'detail.pegawai:id,kode_pegawai,nama_lengkap',
+            'detail.jabatan:id,nama_jabatan',
+        ])->withCount('detail')->findOrFail($id);
 
         $totalBiaya = PenggajianDetail::where('penggajian_periode_id', $id)->sum('total');
 
@@ -275,15 +338,78 @@ class PenggajianController extends Controller
             ], 422);
         }
 
-        $periode->status = 'DIBAYARKAN';
-        $periode->dibayar_pada = Carbon::now();
-        $periode->dibayar_oleh = optional($r->user())->id;
-        $periode->save();
+        return DB::transaction(function () use ($r, $periode, $id) {
+            $periode->status = 'DIBAYARKAN';
+            $periode->dibayar_pada = Carbon::now();
+            $periode->dibayar_oleh = optional($r->user())->id;
+            $periode->save();
 
-        return response()->json([
-            'message' => 'Penggajian ditandai sudah dibayar',
-            'data' => $periode,
-        ]);
+            // =========================
+            // GENERATE JURNAL UMUM
+            // =========================
+            $totalBruto = PenggajianDetail::where('penggajian_periode_id', $id)->sum(DB::raw('gaji_pokok + tunjangan'));
+            $totalPph21 = PenggajianDetail::where('penggajian_periode_id', $id)->sum('pph21');
+            $totalNeto = PenggajianDetail::where('penggajian_periode_id', $id)->sum('total');
+
+            $nomorJurnal = 'JU-' . str_replace('-', '', $periode->periode) . '-' . str_pad($periode->id, 4, '0', STR_PAD_LEFT);
+
+            $jurnal = JurnalUmum::create([
+                'nomor_jurnal' => $nomorJurnal,
+                'tanggal' => Carbon::now()->format('Y-m-d'),
+                'keterangan' => "Payroll Periode " . $periode->periode,
+                'referensi_tipe' => 'PENGGAJIAN_PERIODE',
+                'referensi_id' => $periode->id,
+                'total_debet' => $totalBruto,
+                'total_kredit' => $totalBruto,
+                'dibuat_oleh' => optional($r->user())->id,
+            ]);
+
+            // Debet: Beban Gaji (5101)
+            $coaBeban = Coa::where('kode_akun', '5101')->first();
+            if ($coaBeban) {
+                JurnalUmumDetail::create([
+                    'jurnal_umum_id' => $jurnal->id,
+                    'coa_id' => $coaBeban->id,
+                    'debet' => $totalBruto,
+                    'kredit' => 0,
+                    'keterangan' => 'Beban Gaji Periode ' . $periode->periode
+                ]);
+            }
+
+            // Kredit: Kas & Bank (1101) -> Total yang dibayar ke pegawai
+            $coaKas = Coa::where('kode_akun', '1101')->first();
+            if ($coaKas) {
+                JurnalUmumDetail::create([
+                    'jurnal_umum_id' => $jurnal->id,
+                    'coa_id' => $coaKas->id,
+                    'debet' => 0,
+                    'kredit' => $totalNeto,
+                    'keterangan' => 'Pembayaran Gaji Periode ' . $periode->periode
+                ]);
+            }
+
+            // Kredit: Hutang PPh 21 (2102) -> Potongan pajak
+            if ($totalPph21 > 0) {
+                $coaPph = Coa::where('kode_akun', '2102')->first();
+                if ($coaPph) {
+                    JurnalUmumDetail::create([
+                        'jurnal_umum_id' => $jurnal->id,
+                        'coa_id' => $coaPph->id,
+                        'debet' => 0,
+                        'kredit' => $totalPph21,
+                        'keterangan' => 'Potongan PPh 21 Periode ' . $periode->periode
+                    ]);
+                }
+            }
+
+            return response()->json([
+                'message' => 'Penggajian ditandai sudah dibayar & Jurnal Umum berhasil dibuat',
+                'data' => [
+                    'periode' => $periode,
+                    'jurnal' => $jurnal->load('details.coa'),
+                ],
+            ]);
+        });
     }
 
     // =========================
@@ -356,8 +482,10 @@ class PenggajianController extends Controller
         }
 
         $detail = PenggajianDetail::with([
-                'periode:id,periode,status',
+                'periode:id,periode,status,diajukan_oleh',
+                'periode.pengaju:id,name', // User who submitted
                 'jabatan:id,nama_jabatan',
+                'komponen'
             ])
             ->where('pegawai_id', $pegawai->id)
             ->where('penggajian_periode_id', $penggajianPeriodeId)
@@ -369,6 +497,9 @@ class PenggajianController extends Controller
                 'data' => null,
             ], 404);
         }
+
+        // Attach pegawai data manually since we already have it
+        $detail->pegawai = $pegawai;
 
         return response()->json([
             'message' => 'OK',
@@ -402,6 +533,36 @@ class PenggajianController extends Controller
                 'total' => (float) $detail->total,
                 'ringkasan' => $hasil,
             ],
+        ]);
+    }
+
+    // =========================
+    // FAT: UPLOAD BUKTI TRANSFER
+    // =========================
+    public function uploadBukti(Request $r, $detailId)
+    {
+        $r->validate([
+            'bukti' => 'required|file|mimes:jpg,jpeg,png,pdf|max:2048',
+        ]);
+
+        $detail = PenggajianDetail::findOrFail($detailId);
+        
+        // Hapus file lama jika ada
+        if ($detail->bukti_transfer) {
+            Storage::disk('public')->delete($detail->bukti_transfer);
+        }
+
+        $path = $r->file('bukti')->store('bukti_transfer', 'public');
+        
+        $detail->bukti_transfer = $path;
+        $detail->save();
+
+        return response()->json([
+            'message' => 'Bukti transfer berhasil diupload',
+            'data' => [
+                'id' => $detail->id,
+                'bukti_url' => asset('storage/' . $path),
+            ]
         ]);
     }
 
@@ -650,6 +811,66 @@ class PenggajianController extends Controller
             'catatan' => 'Metode annualized progresif (minimal).',
         ];
     }
+
+    // =========================
+    // MODUL: KOMPONEN (BONUS/PROJECT/POTONGAN)
+    // =========================
+    public function tambahKomponen(Request $r, $detailId)
+    {
+        $d = PenggajianDetail::with('periode')->findOrFail($detailId);
+        if ($d->periode->status !== 'DRAFT') return response()->json(['message' => 'Hanya bisa edit saat DRAFT'], 422);
+
+        $r->validate([
+            'nama' => 'required|string',
+            'nilai' => 'required|numeric|min:0',
+            'jenis' => 'required|in:TUNJANGAN,POTONGAN'
+        ]);
+
+        \App\Models\PenggajianKomponen::create([
+            'penggajian_detail_id' => $detailId,
+            'nama' => $r->nama,
+            'nilai' => $r->nilai,
+            'jenis' => $r->jenis,
+            'dibuat_oleh' => optional($r->user())->id
+        ]);
+
+        $this->rehitungTotalDetail($d->id);
+
+        return response()->json(['message' => 'Komponen berhasil ditambahkan']);
+    }
+
+    public function hapusKomponen($id)
+    {
+        $komponen = \App\Models\PenggajianKomponen::findOrFail($id);
+        $d = PenggajianDetail::with('periode')->findOrFail($komponen->penggajian_detail_id);
+        
+        if ($d->periode->status !== 'DRAFT') return response()->json(['message' => 'Hanya bisa edit saat DRAFT'], 422);
+
+        $komponen->delete();
+        $this->rehitungTotalDetail($d->id);
+
+        return response()->json(['message' => 'Komponen berhasil dihapus']);
+    }
+
+    private function rehitungTotalDetail($detailId)
+    {
+        $d = PenggajianDetail::findOrFail($detailId);
+        
+        // Sum components
+        $totalTunjangan = \App\Models\PenggajianKomponen::where('penggajian_detail_id', $detailId)
+            ->where('jenis', 'TUNJANGAN')->sum('nilai');
+            
+        $totalPotonganLain = \App\Models\PenggajianKomponen::where('penggajian_detail_id', $detailId)
+            ->where('jenis', 'POTONGAN')->sum('nilai');
+
+        $d->tunjangan = $totalTunjangan;
+        $d->potongan = $totalPotonganLain; 
+        
+        $d->total = $d->gaji_pokok + $totalTunjangan - $totalPotonganLain - $d->pph21;
+        $d->save();
+    }
+
+
 
     private function nilaiPtkp(string $status): float
     {
